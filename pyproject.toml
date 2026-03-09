@@ -21,6 +21,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
+[project.optional-dependencies]
+whisper = [
+    "faster-whisper>=1.0.0",
+]
+
 [project.scripts]
 yt-agent = "yt_agent.cli:app"
 

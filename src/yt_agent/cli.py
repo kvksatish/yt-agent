@@ -65,8 +65,12 @@ def main(
     ] = False,
     whisper: Annotated[
         bool,
-        typer.Option("--whisper/--no-whisper", help="Transcribe audio with Whisper."),
+        typer.Option("--whisper/--no-whisper", help="Transcribe audio with Whisper instead of youtube-transcript-api."),
     ] = False,
+    whisper_model: Annotated[
+        str,
+        typer.Option("--whisper-model", help="Whisper model size (tiny/base/small/medium/large-v3)."),
+    ] = "base",
     no_cache: Annotated[
         bool,
         typer.Option("--no-cache", help="Bypass cache; always re-fetch."),
@@ -150,7 +154,18 @@ def main(
     if frames:
         typer.echo("Frame extraction: not yet implemented")
     if whisper:
-        typer.echo("Whisper transcription: not yet implemented")
+        from yt_agent.whisper_transcribe import transcribe
+        typer.echo(f"Whisper transcription: model={whisper_model}")
+        try:
+            segments, lang = transcribe(url, model_name=whisper_model)
+            store_transcript(vid, [s.model_dump() for s in segments], lang)
+            transcript_path = save_transcript(segments, lang, output_dir)
+            typer.echo(
+                f"Transcript saved: {transcript_path} "
+                f"({len(segments)} segments, lang={lang})"
+            )
+        except (ImportError, RuntimeError, ValueError) as exc:
+            typer.echo(f"Whisper transcription failed: {exc}", err=True)
 
 
 if __name__ == "__main__":
