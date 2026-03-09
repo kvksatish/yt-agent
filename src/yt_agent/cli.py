@@ -61,8 +61,20 @@ def main(
     ] = OutputFormat.json,
     frames: Annotated[
         bool,
-        typer.Option("--frames/--no-frames", help="Extract key frames from video."),
+        typer.Option("--frames/--no-frames", help="Extract frames from video via ffmpeg."),
     ] = False,
+    frames_mode: Annotated[
+        str,
+        typer.Option("--frames-mode", help="Frame extraction mode: interval, scene, or keyframe."),
+    ] = "interval",
+    frames_interval: Annotated[
+        float,
+        typer.Option("--frames-interval", help="Seconds between frames (interval mode)."),
+    ] = 30.0,
+    frames_threshold: Annotated[
+        float,
+        typer.Option("--frames-threshold", help="Scene change threshold 0.0-1.0 (scene mode)."),
+    ] = 0.3,
     whisper: Annotated[
         bool,
         typer.Option("--whisper/--no-whisper", help="Transcribe audio with Whisper instead of youtube-transcript-api."),
@@ -161,7 +173,18 @@ def main(
             )
 
     if frames:
-        typer.echo("Frame extraction: not yet implemented")
+        from yt_agent.frames import extract_frames
+        typer.echo(f"Frame extraction: mode={frames_mode}")
+        try:
+            frame_list = extract_frames(
+                url, output_dir,
+                mode=frames_mode,
+                interval=frames_interval,
+                scene_threshold=frames_threshold,
+            )
+            typer.echo(f"Frames saved: {output_dir / 'frames'} ({len(frame_list)} frames)")
+        except (RuntimeError, ValueError) as exc:
+            typer.echo(f"Frame extraction failed: {exc}", err=True)
     if whisper:
         from yt_agent.whisper_transcribe import transcribe
         typer.echo(f"Whisper transcription: model={whisper_model}")
