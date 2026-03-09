@@ -8,6 +8,7 @@ import typer
 
 from yt_agent import __version__
 from yt_agent.metadata import extract_metadata, save_metadata
+from yt_agent.transcript import fetch_transcript, save_transcript
 
 app = typer.Typer(
     name="yt-agent",
@@ -87,6 +88,14 @@ def main(
         typer.echo(f"**Views:** {meta.view_count}  ")
         if meta.tags:
             typer.echo(f"**Tags:** {', '.join(meta.tags[:10])}")
+
+    if not whisper:
+        try:
+            segments, lang = fetch_transcript(url)
+            transcript_path = save_transcript(segments, lang, output_dir)
+            typer.echo(f"Transcript saved: {transcript_path} ({len(segments)} segments, lang={lang})")
+        except (ValueError, RuntimeError) as exc:
+            typer.echo(f"Transcript unavailable: {exc}", err=True)
 
     if frames:
         typer.echo("Frame extraction: not yet implemented")

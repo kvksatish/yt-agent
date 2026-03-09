@@ -7,6 +7,14 @@ from datetime import datetime
 from pydantic import BaseModel, Field, HttpUrl
 
 
+class Chapter(BaseModel):
+    """A named chapter within a YouTube video."""
+
+    title: str = Field(description="Chapter title.")
+    start_time: float = Field(description="Chapter start time in seconds.")
+    end_time: float | None = Field(default=None, description="Chapter end time in seconds.")
+
+
 class VideoMetadata(BaseModel):
     """Core metadata extracted from a YouTube video."""
 
@@ -25,6 +33,7 @@ class VideoMetadata(BaseModel):
         default=None, description="Thumbnail image URL."
     )
     tags: list[str] = Field(default_factory=list, description="Video tags.")
+    chapters: list[Chapter] = Field(default_factory=list, description="Video chapters.")
 
 
 class TranscriptSegment(BaseModel):
