@@ -51,6 +51,25 @@ class ExtractOptions:
     frames_threshold: float = 0.3
     """Scene change threshold 0.0-1.0 (scene mode)."""
 
+    # VLM options (off by default — requires --frames to produce images first)
+    vlm: bool = False
+    """Run a vision LLM on each extracted frame to generate descriptions."""
+
+    vlm_backend: str = "ollama"
+    """VLM backend: 'ollama' (local) or 'openai' (OpenAI-compatible API)."""
+
+    vlm_model: str | None = None
+    """VLM model name. Defaults: ollama→llava, openai→gpt-4o."""
+
+    vlm_api_base: str | None = None
+    """Override API base URL for the VLM backend."""
+
+    vlm_api_key: str = ""
+    """API key for openai-compatible VLM backend."""
+
+    vlm_prompt: str = ""
+    """Custom prompt for the VLM. Empty = use default."""
+
     # Output / cache
     output_dir: Path | None = None
     """Directory to write artifacts. Defaults to yt-agent-output/<video_id>/."""
@@ -165,6 +184,22 @@ def extract(
             interval=options.frames_interval,
             scene_threshold=options.frames_threshold,
         )
+
+        # ── VLM descriptions (optional, requires frames) ──────────────────
+        if options.vlm and frames:
+            from yt_agent.vlm import DEFAULT_PROMPT, describe_frames, make_backend
+            vlm_backend = make_backend(
+                backend=options.vlm_backend,
+                model=options.vlm_model,
+                api_base=options.vlm_api_base,
+                api_key=options.vlm_api_key,
+            )
+            frames = describe_frames(
+                frames,
+                output_dir,
+                vlm_backend,
+                prompt=options.vlm_prompt or DEFAULT_PROMPT,
+            )
 
     return VideoAnalysis(
         metadata=meta,

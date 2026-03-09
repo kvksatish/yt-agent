@@ -75,6 +75,26 @@ def main(
         float,
         typer.Option("--frames-threshold", help="Scene change threshold 0.0-1.0 (scene mode)."),
     ] = 0.3,
+    vlm: Annotated[
+        bool,
+        typer.Option("--vlm/--no-vlm", help="Describe frames with a vision LLM (requires --frames)."),
+    ] = False,
+    vlm_backend: Annotated[
+        str,
+        typer.Option("--vlm-backend", help="VLM backend: ollama (default) or openai."),
+    ] = "ollama",
+    vlm_model: Annotated[
+        Optional[str],
+        typer.Option("--vlm-model", help="VLM model name (e.g. llava, gpt-4o)."),
+    ] = None,
+    vlm_api_base: Annotated[
+        Optional[str],
+        typer.Option("--vlm-api-base", help="Override VLM API base URL."),
+    ] = None,
+    vlm_api_key: Annotated[
+        str,
+        typer.Option("--vlm-api-key", envvar="OPENAI_API_KEY", help="API key for openai VLM backend."),
+    ] = "",
     whisper: Annotated[
         bool,
         typer.Option("--whisper/--no-whisper", help="Transcribe audio with Whisper instead of youtube-transcript-api."),
@@ -183,6 +203,15 @@ def main(
                 scene_threshold=frames_threshold,
             )
             typer.echo(f"Frames saved: {output_dir / 'frames'} ({len(frame_list)} frames)")
+            if vlm and frame_list:
+                from yt_agent.vlm import DEFAULT_PROMPT, describe_frames, make_backend
+                typer.echo(f"VLM descriptions: backend={vlm_backend}, model={vlm_model or 'default'}")
+                try:
+                    backend = make_backend(vlm_backend, model=vlm_model, api_base=vlm_api_base, api_key=vlm_api_key)
+                    describe_frames(frame_list, output_dir, backend)
+                    typer.echo("VLM descriptions saved alongside frames (.txt)")
+                except (RuntimeError, ValueError) as vlm_exc:
+                    typer.echo(f"VLM description failed: {vlm_exc}", err=True)
         except (RuntimeError, ValueError) as exc:
             typer.echo(f"Frame extraction failed: {exc}", err=True)
     if whisper:
