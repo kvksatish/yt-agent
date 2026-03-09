@@ -71,6 +71,14 @@ def main(
         str,
         typer.Option("--whisper-model", help="Whisper model size (tiny/base/small/medium/large-v3)."),
     ] = "base",
+    language: Annotated[
+        Optional[str],
+        typer.Option("--language", "-l", help="Preferred transcript language (BCP-47, e.g. 'fr'). Default: auto."),
+    ] = None,
+    translate_to: Annotated[
+        Optional[str],
+        typer.Option("--translate-to", help="Translate transcript to this language (BCP-47, e.g. 'en')."),
+    ] = None,
     no_cache: Annotated[
         bool,
         typer.Option("--no-cache", help="Bypass cache; always re-fetch."),
@@ -138,8 +146,9 @@ def main(
                 segments = [TranscriptSegment.model_validate(s) for s in raw_segs]
 
         if segments is None:
+            preferred = [language] if language else None
             try:
-                segments, lang = fetch_transcript(url)
+                segments, lang = fetch_transcript(url, languages=preferred, translate_to=translate_to)
                 store_transcript(vid, [s.model_dump() for s in segments], lang)
             except (ValueError, RuntimeError) as exc:
                 typer.echo(f"Transcript unavailable: {exc}", err=True)
@@ -166,6 +175,24 @@ def main(
             )
         except (ImportError, RuntimeError, ValueError) as exc:
             typer.echo(f"Whisper transcription failed: {exc}", err=True)
+
+
+@app.command("languages")
+def cmd_languages(
+    url: Annotated[str, typer.Argument(help="YouTube video URL.")],
+) -> None:
+    """List available transcript languages for a video."""
+    from yt_agent.transcript import list_languages
+    try:
+        langs = list_languages(url)
+    except (ValueError, RuntimeError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    for entry in langs:
+        generated = " [auto]" if entry["is_generated"] else ""
+        translatable = " [translatable]" if entry["is_translatable"] else ""
+        typer.echo(f"{entry['language_code']:8s}  {entry['language']}{generated}{translatable}")
 
 
 if __name__ == "__main__":

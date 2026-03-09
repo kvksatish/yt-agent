@@ -38,30 +38,67 @@ def _video_id_from_url(url: str) -> str:
     raise ValueError(f"Cannot extract video ID from: {url!r}")
 
 
+def list_languages(url: str) -> list[dict[str, str]]:
+    """Return available transcript languages for a video.
+
+    Args:
+        url: YouTube video URL or bare video ID.
+
+    Returns:
+        List of dicts with keys: language, language_code, is_generated, is_translatable.
+    """
+    video_id = _video_id_from_url(url)
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+    except TranscriptsDisabled:
+        raise ValueError(f"Transcripts are disabled for video {video_id!r}.")
+    except VideoUnavailable:
+        raise ValueError(f"Video {video_id!r} is unavailable.")
+
+    result = []
+    for t in transcript_list:
+        result.append({
+            "language": t.language,
+            "language_code": t.language_code,
+            "is_generated": t.is_generated,
+            "is_translatable": t.is_translatable,
+        })
+    return result
+
+
 def fetch_transcript(
     url: str,
     languages: list[str] | None = None,
+    translate_to: str | None = None,
 ) -> tuple[list[TranscriptSegment], str]:
     """Fetch auto/manual subtitles for a YouTube video.
 
     Tries the preferred languages in order, then falls back to any available
-    transcript (auto-generated included).
+    transcript (auto-generated included). Optionally translates via YouTube's
+    built-in translation API.
 
     Args:
         url: YouTube video URL or bare video ID.
         languages: Ordered list of BCP-47 language codes to try first.
+                   Pass ["auto"] or None to accept any language without preference.
                    Defaults to ["en"].
+        translate_to: BCP-47 code to translate the fetched transcript into.
+                      Requires the source transcript to be translatable.
 
     Returns:
-        Tuple of (segments, language_code) where language_code is the
-        language of the fetched transcript.
+        Tuple of (segments, language_code) where language_code reflects the
+        final language (post-translation if requested).
 
     Raises:
-        ValueError: If the video ID cannot be parsed or transcripts are disabled.
+        ValueError: If the video ID cannot be parsed, transcripts are disabled,
+                    or translation is not supported for the selected transcript.
         RuntimeError: If no transcript is available.
     """
-    if languages is None:
-        languages = ["en"]
+    auto_mode = languages is None or languages == ["auto"]
+    if auto_mode:
+        effective_languages: list[str] = []
+    else:
+        effective_languages = languages  # type: ignore[assignment]
 
     video_id = _video_id_from_url(url)
 
@@ -72,22 +109,24 @@ def fetch_transcript(
     except VideoUnavailable:
         raise ValueError(f"Video {video_id!r} is unavailable.")
 
-    # Try manual transcripts first, then generated
     transcript: Transcript | None = None
-    for lang in languages:
-        try:
-            transcript = transcript_list.find_manually_created_transcript([lang])
-            break
-        except NoTranscriptFound:
-            pass
 
-    if transcript is None:
-        for lang in languages:
+    if not auto_mode:
+        # Try manual transcripts first, then generated, in preferred order
+        for lang in effective_languages:
             try:
-                transcript = transcript_list.find_generated_transcript([lang])
+                transcript = transcript_list.find_manually_created_transcript([lang])
                 break
             except NoTranscriptFound:
                 pass
+
+        if transcript is None:
+            for lang in effective_languages:
+                try:
+                    transcript = transcript_list.find_generated_transcript([lang])
+                    break
+                except NoTranscriptFound:
+                    pass
 
     if transcript is None:
         # Fall back to whatever is available
@@ -95,6 +134,14 @@ def fetch_transcript(
             transcript = next(iter(transcript_list))
         except StopIteration:
             raise RuntimeError(f"No transcripts found for video {video_id!r}.")
+
+    # Apply translation if requested
+    if translate_to and translate_to != transcript.language_code:
+        if not transcript.is_translatable:
+            raise ValueError(
+                f"Transcript in {transcript.language_code!r} does not support translation."
+            )
+        transcript = transcript.translate(translate_to)
 
     raw = transcript.fetch()
     language_code: str = transcript.language_code
