@@ -247,5 +247,174 @@ def cmd_languages(
         typer.echo(f"{entry['language_code']:8s}  {entry['language']}{generated}{translatable}")
 
 
+def _run_one(url: str, kwargs: dict) -> tuple[str, bool, str]:
+    """Process a single URL; returns (url, success, message)."""
+    import io
+    import contextlib
+
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            # Invoke the main command programmatically
+            from yt_agent.metadata import extract_metadata, save_metadata
+            from yt_agent.cache import load_metadata, store_metadata, load_transcript, store_transcript
+            from yt_agent.transcript import fetch_transcript, save_transcript
+            from yt_agent.schemas import VideoMetadata, TranscriptSegment
+
+            output_dir = kwargs["output_dir"]
+            no_cache = kwargs["no_cache"]
+            whisper = kwargs["whisper"]
+            whisper_model = kwargs["whisper_model"]
+            language = kwargs["language"]
+            translate_to = kwargs["translate_to"]
+
+            vid = _video_id(url)
+
+            meta: VideoMetadata | None = None
+            if not no_cache:
+                cached = load_metadata(vid)
+                if cached:
+                    cached.pop("_cached_at", None)
+                    meta = VideoMetadata.model_validate(cached)
+            if meta is None:
+                meta = extract_metadata(url)
+                store_metadata(vid, meta.model_dump(mode="json"))
+            save_metadata(meta, output_dir / vid)
+
+            if not whisper:
+                segs: list[TranscriptSegment] | None = None
+                lang = "en"
+                if not no_cache:
+                    cached_tx = load_transcript(vid)
+                    if cached_tx is not None:
+                        raw_segs, lang = cached_tx
+                        segs = [TranscriptSegment.model_validate(s) for s in raw_segs]
+                if segs is None:
+                    preferred = [language] if language else None
+                    try:
+                        segs, lang = fetch_transcript(url, languages=preferred, translate_to=translate_to)
+                        store_transcript(vid, [s.model_dump() for s in segs], lang)
+                    except (ValueError, RuntimeError):
+                        pass
+                if segs is not None:
+                    save_transcript(segs, lang, output_dir / vid)
+            else:
+                from yt_agent.whisper_transcribe import transcribe
+                segs, lang = transcribe(url, model_name=whisper_model)
+                store_transcript(vid, [s.model_dump() for s in segs], lang)
+                save_transcript(segs, lang, output_dir / vid)
+
+        return url, True, meta.title
+    except Exception as exc:  # noqa: BLE001
+        return url, False, str(exc)
+
+
+@app.command("batch")
+def cmd_batch(
+    playlist: Annotated[
+        Optional[str],
+        typer.Option("--playlist", help="YouTube playlist URL to process all videos."),
+    ] = None,
+    channel: Annotated[
+        Optional[str],
+        typer.Option("--channel", help="YouTube channel URL to process all videos."),
+    ] = None,
+    batch_file: Annotated[
+        Optional[str],
+        typer.Option("--batch", help="Path to a file with one YouTube URL per line."),
+    ] = None,
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output directory (each video gets a sub-folder)."),
+    ] = None,
+    workers: Annotated[
+        int,
+        typer.Option("--workers", "-w", help="Number of parallel workers."),
+    ] = 4,
+    whisper: Annotated[
+        bool,
+        typer.Option("--whisper/--no-whisper", help="Use Whisper for transcription."),
+    ] = False,
+    whisper_model: Annotated[
+        str,
+        typer.Option("--whisper-model", help="Whisper model size."),
+    ] = "base",
+    language: Annotated[
+        Optional[str],
+        typer.Option("--language", "-l", help="Preferred transcript language (BCP-47)."),
+    ] = None,
+    translate_to: Annotated[
+        Optional[str],
+        typer.Option("--translate-to", help="Translate transcript to this language."),
+    ] = None,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Bypass cache."),
+    ] = False,
+) -> None:
+    """Process multiple YouTube videos from a playlist, channel, or URL file."""
+    from yt_agent.batch import resolve_playlist, read_batch_file
+    import concurrent.futures
+
+    urls: list[str] = []
+
+    if playlist:
+        typer.echo(f"Resolving playlist: {playlist}")
+        try:
+            urls += resolve_playlist(playlist)
+        except RuntimeError as exc:
+            typer.echo(f"Error resolving playlist: {exc}", err=True)
+            raise typer.Exit(code=1)
+
+    if channel:
+        typer.echo(f"Resolving channel: {channel}")
+        try:
+            urls += resolve_playlist(channel)
+        except RuntimeError as exc:
+            typer.echo(f"Error resolving channel: {exc}", err=True)
+            raise typer.Exit(code=1)
+
+    if batch_file:
+        try:
+            urls += read_batch_file(batch_file)
+        except (OSError, ValueError) as exc:
+            typer.echo(f"Error reading batch file: {exc}", err=True)
+            raise typer.Exit(code=1)
+
+    if not urls:
+        typer.echo("No URLs found. Provide --playlist, --channel, or --batch.", err=True)
+        raise typer.Exit(code=1)
+
+    urls = list(dict.fromkeys(urls))  # deduplicate, preserve order
+    typer.echo(f"Processing {len(urls)} videos with {workers} workers...")
+
+    output_dir = output if output else Path("yt-agent-batch-output")
+    kwargs = {
+        "output_dir": output_dir,
+        "no_cache": no_cache,
+        "whisper": whisper,
+        "whisper_model": whisper_model,
+        "language": language,
+        "translate_to": translate_to,
+    }
+
+    ok = 0
+    fail = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_run_one, url, kwargs): url for url in urls}
+        for future in concurrent.futures.as_completed(futures):
+            url, success, msg = future.result()
+            if success:
+                ok += 1
+                typer.echo(f"  [ok] {msg}")
+            else:
+                fail += 1
+                typer.echo(f"  [fail] {url}: {msg}", err=True)
+
+    typer.echo(f"\nDone: {ok} succeeded, {fail} failed.")
+    if fail:
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
