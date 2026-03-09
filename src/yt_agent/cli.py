@@ -7,7 +7,16 @@ from typing import Annotated, Optional
 import typer
 
 from yt_agent import __version__
+from yt_agent.cache import (
+    cache_info,
+    invalidate,
+    load_metadata,
+    load_transcript,
+    store_metadata,
+    store_transcript,
+)
 from yt_agent.metadata import extract_metadata, save_metadata
+from yt_agent.schemas import TranscriptSegment, VideoMetadata
 from yt_agent.transcript import fetch_transcript, save_transcript
 
 app = typer.Typer(
@@ -29,6 +38,13 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _video_id(url: str) -> str:
+    """Quick video ID extraction for cache lookup."""
+    import re
+    m = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", url)
+    return m.group(1) if m else url
+
+
 @app.command()
 def main(
     url: Annotated[
@@ -37,7 +53,7 @@ def main(
     ],
     output: Annotated[
         Optional[Path],
-        typer.Option("--output", "-o", help="Output file path."),
+        typer.Option("--output", "-o", help="Output directory path."),
     ] = None,
     format: Annotated[
         OutputFormat,
@@ -51,6 +67,10 @@ def main(
         bool,
         typer.Option("--whisper/--no-whisper", help="Transcribe audio with Whisper."),
     ] = False,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Bypass cache; always re-fetch."),
+    ] = False,
     version: Annotated[
         Optional[bool],
         typer.Option(
@@ -62,13 +82,25 @@ def main(
     """Process a YouTube video URL and extract intelligence."""
     typer.echo(f"Processing: {url}")
 
-    output_dir = Path(output) if output else Path(f"yt-agent-output")
+    output_dir = output if output else Path("yt-agent-output")
+    vid = _video_id(url)
 
-    try:
-        meta = extract_metadata(url)
-    except (RuntimeError, ValueError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1)
+    # ── Metadata ─────────────────────────────────────────────────────────────
+    meta: VideoMetadata | None = None
+    if not no_cache:
+        cached = load_metadata(vid)
+        if cached:
+            typer.echo("[cache] metadata hit")
+            cached.pop("_cached_at", None)
+            meta = VideoMetadata.model_validate(cached)
+
+    if meta is None:
+        try:
+            meta = extract_metadata(url)
+        except (RuntimeError, ValueError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1)
+        store_metadata(vid, meta.model_dump(mode="json"))
 
     meta_path = save_metadata(meta, output_dir)
     typer.echo(f"Metadata saved: {meta_path}")
@@ -89,13 +121,31 @@ def main(
         if meta.tags:
             typer.echo(f"**Tags:** {', '.join(meta.tags[:10])}")
 
+    # ── Transcript ────────────────────────────────────────────────────────────
     if not whisper:
-        try:
-            segments, lang = fetch_transcript(url)
+        segments: list[TranscriptSegment] | None = None
+        lang: str = "en"
+
+        if not no_cache:
+            cached_tx = load_transcript(vid)
+            if cached_tx is not None:
+                raw_segs, lang = cached_tx
+                typer.echo("[cache] transcript hit")
+                segments = [TranscriptSegment.model_validate(s) for s in raw_segs]
+
+        if segments is None:
+            try:
+                segments, lang = fetch_transcript(url)
+                store_transcript(vid, [s.model_dump() for s in segments], lang)
+            except (ValueError, RuntimeError) as exc:
+                typer.echo(f"Transcript unavailable: {exc}", err=True)
+
+        if segments is not None:
             transcript_path = save_transcript(segments, lang, output_dir)
-            typer.echo(f"Transcript saved: {transcript_path} ({len(segments)} segments, lang={lang})")
-        except (ValueError, RuntimeError) as exc:
-            typer.echo(f"Transcript unavailable: {exc}", err=True)
+            typer.echo(
+                f"Transcript saved: {transcript_path} "
+                f"({len(segments)} segments, lang={lang})"
+            )
 
     if frames:
         typer.echo("Frame extraction: not yet implemented")
