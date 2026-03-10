@@ -188,6 +188,21 @@ def main(
                 store_transcript(vid, [s.model_dump() for s in segments], lang)
             except (ValueError, RuntimeError) as exc:
                 typer.echo(f"Transcript unavailable: {exc}", err=True)
+                # Auto-fallback to Whisper when youtube-transcript-api has no captions
+                typer.echo(f"[whisper-fallback] Attempting Whisper transcription (model={whisper_model})...")
+                try:
+                    from yt_agent.whisper_transcribe import transcribe as _whisper_fn
+                    segments, lang = _whisper_fn(url, model_name=whisper_model, language=language)
+                    store_transcript(vid, [s.model_dump() for s in segments], lang)
+                    typer.echo(f"[whisper-fallback] Transcription succeeded ({len(segments)} segments, lang={lang}).")
+                except ImportError:
+                    typer.echo(
+                        "[whisper-fallback] faster-whisper not installed. "
+                        "Run: pip install faster-whisper",
+                        err=True,
+                    )
+                except (RuntimeError, ValueError) as w_exc:
+                    typer.echo(f"[whisper-fallback] Whisper also failed: {w_exc}", err=True)
 
         if segments is not None:
             transcript_path = save_transcript(segments, lang, output_dir)

@@ -167,7 +167,18 @@ def extract(
                 )
                 store_transcript(video_id, [s.model_dump() for s in segments], lang)
             except (ValueError, RuntimeError):
-                segments = []
+                # Auto-fallback: try Whisper when youtube-transcript-api has no captions
+                try:
+                    from yt_agent.whisper_transcribe import transcribe as _whisper_fn
+                    segments, lang = _whisper_fn(
+                        url,
+                        model_name=options.whisper_model,
+                    )
+                    store_transcript(video_id, [s.model_dump() for s in segments], lang)
+                except ImportError:
+                    segments = []
+                except (RuntimeError, ValueError):
+                    segments = []
 
     if segments:
         from yt_agent.transcript import save_transcript
