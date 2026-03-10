@@ -19,6 +19,12 @@ from yt_agent.metadata import extract_metadata, save_metadata
 from yt_agent.schemas import TranscriptSegment, VideoMetadata
 from yt_agent.transcript import fetch_transcript, save_transcript
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"yt-agent {__version__}")
+        raise typer.Exit()
+
+
 app = typer.Typer(
     name="yt-agent",
     help="YouTube intelligence tool for AI agents.",
@@ -26,16 +32,21 @@ app = typer.Typer(
 )
 
 
+@app.callback()
+def _app_options(
+    version: Annotated[
+        Optional[bool],
+        typer.Option("--version", "-V", callback=_version_callback, is_eager=True,
+                     help="Show version and exit."),
+    ] = None,
+) -> None:
+    pass
+
+
 class OutputFormat(str, Enum):
     json = "json"
     text = "text"
     markdown = "markdown"
-
-
-def version_callback(value: bool) -> None:
-    if value:
-        typer.echo(f"yt-agent {__version__}")
-        raise typer.Exit()
 
 
 def _video_id(url: str) -> str:
@@ -115,13 +126,6 @@ def main(
         bool,
         typer.Option("--no-cache", help="Bypass cache; always re-fetch."),
     ] = False,
-    version: Annotated[
-        Optional[bool],
-        typer.Option(
-            "--version", "-V", callback=version_callback, is_eager=True,
-            help="Show version and exit.",
-        ),
-    ] = None,
 ) -> None:
     """Process a YouTube video URL and extract intelligence."""
     typer.echo(f"Processing: {url}")

@@ -19,6 +19,8 @@ except ImportError as exc:
         "youtube-transcript-api is required: pip install youtube-transcript-api"
     ) from exc
 
+_api = YouTubeTranscriptApi()
+
 
 def _video_id_from_url(url: str) -> str:
     """Extract YouTube video ID from various URL formats."""
@@ -49,7 +51,7 @@ def list_languages(url: str) -> list[dict[str, str]]:
     """
     video_id = _video_id_from_url(url)
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = _api.list(video_id)
     except TranscriptsDisabled:
         raise ValueError(f"Transcripts are disabled for video {video_id!r}.")
     except VideoUnavailable:
@@ -103,7 +105,7 @@ def fetch_transcript(
     video_id = _video_id_from_url(url)
 
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = _api.list(video_id)
     except TranscriptsDisabled:
         raise ValueError(f"Transcripts are disabled for video {video_id!r}.")
     except VideoUnavailable:
@@ -148,13 +150,13 @@ def fetch_transcript(
 
     segments: list[TranscriptSegment] = []
     for entry in raw:
-        start = float(entry["start"])
-        duration = float(entry.get("duration", 0.0))
+        start = float(entry.start)
+        duration = float(entry.duration)
         segments.append(
             TranscriptSegment(
                 start=start,
                 end=start + duration,
-                text=entry["text"].strip(),
+                text=entry.text.strip(),
             )
         )
 
