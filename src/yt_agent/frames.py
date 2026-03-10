@@ -14,6 +14,7 @@ Requires ffmpeg on PATH.
 from __future__ import annotations
 
 import shutil
+import struct
 import subprocess
 import tempfile
 from pathlib import Path
@@ -76,6 +77,30 @@ def _parse_timestamps_from_filenames(frames_dir: Path) -> list[float]:
         except (IndexError, ValueError):
             pass
     return timestamps
+
+
+def _jpeg_dimensions(path: Path) -> tuple[int, int]:
+    """Return (width, height) of a JPEG by parsing SOF marker — no external deps."""
+    try:
+        with path.open("rb") as f:
+            if f.read(2) != b"\xff\xd8":
+                return 0, 0
+            while True:
+                marker = f.read(2)
+                if len(marker) < 2 or marker[0] != 0xFF:
+                    break
+                m = marker[1]
+                if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                         0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    f.read(3)  # segment length (2 bytes) + bit depth (1 byte)
+                    h, w = struct.unpack(">HH", f.read(4))
+                    return w, h
+                else:
+                    seg_len = struct.unpack(">H", f.read(2))[0]
+                    f.seek(seg_len - 2, 1)
+    except (OSError, struct.error):
+        pass
+    return 0, 0
 
 
 def _run_ffmpeg(args: list[str]) -> None:
@@ -293,11 +318,12 @@ def extract_frames(
             ts = ts_ms / 1000.0
         except (IndexError, ValueError):
             ts = 0.0
+        w, h = _jpeg_dimensions(p)
         infos.append(FrameInfo(
             timestamp=ts,
             path=str(p.relative_to(output_dir)),
-            width=0,
-            height=0,
+            width=w,
+            height=h,
             scene_label=None,
         ))
 
